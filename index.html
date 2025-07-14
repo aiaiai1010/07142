@@ -1,69 +1,105 @@
 <!DOCTYPE html>
-<html>
+<html lang="ja">
 <head>
-  <title>MediaPipe Z座標取得</title>
+  <meta charset="UTF-8">
+  <title>MediaPipe 顔3D座標（修正済）</title>
   <style>
-    body {
-      font-size: 24px;
-      text-align: center;
-    }
+    body { text-align: center; font-size: 18px; margin-top: 20px; }
     video, canvas {
       width: 640px;
       height: 480px;
       transform: scaleX(-1);
+      border: 1px solid #ccc;
     }
+    #info { margin-top: 20px; font-weight: bold; white-space: pre-line; }
   </style>
 </head>
 <body>
-  <h1>鼻先と顎のZ座標</h1>
+  <h2>MediaPipe 顔の3Dワールド座標</h2>
   <video id="video" autoplay playsinline muted></video>
-  <canvas id="canvas"></canvas>
-  <p id="zOutput">読み取り中...</p>
+  <canvas id="canvas" width="640" height="480"></canvas>
+  <div id="info">初期化中...</div>
 
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+  <!-- Eruda（スマホ用開発ツール） -->
+  <script src="https://cdn.jsdelivr.net/npm/eruda"></script>
+  <script>eruda.init();</script>
 
-  <script>
-    const videoElement = document.getElementById('video');
-    const canvasElement = document.getElementById('canvas');
-    const canvasCtx = canvasElement.getContext('2d');
-    const zOutput = document.getElementById('zOutput');
+  <script type="module">
+    import {
+      FaceLandmarker,
+      FilesetResolver,
+      DrawingUtils
+    } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0";
 
-    const faceMesh = new FaceMesh({
-      locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`
-    });
+    const video = document.getElementById("video");
+    const canvas = document.getElementById("canvas");
+    const ctx = canvas.getContext("2d");
+    const info = document.getElementById("info");
 
-    faceMesh.setOptions({
-      maxNumFaces: 1,
-      refineLandmarks: true,
-      minDetectionConfidence: 0.5,
-      minTrackingConfidence: 0.5
-    });
-
-    faceMesh.onResults((results) => {
-      canvasCtx.save();
-      canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
-      canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
-
-      if (results.multiFaceLandmarks.length > 0) {
-        const landmarks = results.multiFaceLandmarks[0];
-        const noseTipZ = landmarks[1].z.toFixed(5);  // 鼻先
-        const chinZ = landmarks[152].z.toFixed(5);   // 顎
-
-        zOutput.textContent = `鼻先のZ座標: ${noseTipZ}、顎のZ座標: ${chinZ}`;
+    async function setupCamera() {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { width: 640, height: 480 },
+          audio: false
+        });
+        video.srcObject = stream;
+        return new Promise((resolve) => {
+          video.onloadedmetadata = () => resolve(video);
+        });
+      } catch (err) {
+        info.textContent = "カメラ取得エラー: " + err.message;
+        throw err;
       }
+    }
 
-      canvasCtx.restore();
-    });
+    async function main() {
+      try {
+        // ✅ 修正ポイント：/wasm を指定しない
+        const vision = await FilesetResolver.forVisionTasks();
 
-    const camera = new Camera(videoElement, {
-      onFrame: async () => {
-        await faceMesh.send({ image: videoElement });
-      },
-      width: 640,
-      height: 480
-    });
-    camera.start();
+        const faceLandmarker = await FaceLandmarker.createFromOptions(vision, {
+          baseOptions: {
+            modelAssetPath:
+              "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task",
+            delegate: "GPU"
+          },
+          outputFaceBlendshapes: false,
+          outputFacialTransformationMatrixes: false,
+          numFaces: 1
+        });
+
+        await setupCamera();
+        await video.play();
+
+        const drawingUtils = new DrawingUtils(canvas);
+
+        const process = async () => {
+          if (video.readyState < 2) return;
+
+          ctx.clearRect(0, 0, canvas.width, canvas.height);
+          drawingUtils.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+          const result = faceLandmarker.detectForVideo(video, Date.now());
+
+          if (!result.faceLandmarks || result.faceLandmarks.length === 0) {
+            info.textContent = "顔が見つかりません";
+          } else {
+            const nose = result.faceLandmarks[0][1];
+            info.textContent =
+              `ワールド座標（鼻先）:\nX: ${nose.x.toFixed(4)}\nY: ${nose.y.toFixed(4)}\nZ: ${nose.z.toFixed(4)}`;
+          }
+
+          requestAnimationFrame(process);
+        };
+
+        requestAnimationFrame(process);
+      } catch (err) {
+        console.error("初期化エラー:", err);
+        info.textContent = "初期化エラー: " + err.message;
+      }
+    }
+
+    main();
   </script>
 </body>
 </html>
