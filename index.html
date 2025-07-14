@@ -2,43 +2,32 @@
 <html lang="ja">
 <head>
   <meta charset="UTF-8">
-  <title>MediaPipe 顔3D座標（ModuleFactory対応）</title>
+  <title>顔の3D座標（TensorFlow.js）</title>
   <style>
     body { text-align: center; font-size: 18px; margin-top: 20px; }
-    video, canvas {
-      width: 640px;
-      height: 480px;
-      transform: scaleX(-1);
-      border: 1px solid #ccc;
-    }
-    #info { margin-top: 20px; font-weight: bold; white-space: pre-line; }
+    video, canvas { width: 640px; height: 480px; transform: scaleX(-1); border: 1px solid #ccc; }
+    #status { margin-top: 20px; font-weight: bold; white-space: pre-line; }
   </style>
 </head>
 <body>
-  <h2>MediaPipe 顔の3Dワールド座標</h2>
+  <h2>顔の3D座標（スマホ対応）</h2>
   <video id="video" autoplay playsinline muted></video>
-  <canvas id="canvas" width="640" height="480"></canvas>
-  <div id="info">初期化中...</div>
+  <canvas id="output" width="640" height="480"></canvas>
+  <div id="status">初期化中...</div>
 
-  <!-- Eruda for console debug -->
-  <script src="https://cdn.jsdelivr.net/npm/eruda"></script>
-  <script>eruda.init();</script>
+  <!-- TensorFlow.js & Face Landmarks Detection -->
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.13.0/dist/tf.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/face-landmarks-detection"></script>
 
-  <script type="module">
-    import {
-      FaceLandmarker,
-      FilesetResolver,
-      DrawingUtils
-    } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0";
-
+  <script>
     const video = document.getElementById("video");
-    const canvas = document.getElementById("canvas");
+    const canvas = document.getElementById("output");
     const ctx = canvas.getContext("2d");
-    const info = document.getElementById("info");
+    const status = document.getElementById("status");
 
     async function setupCamera() {
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { width: 640, height: 480 },
+        video: { facingMode: "user", width: 640, height: 480 },
         audio: false
       });
       video.srcObject = stream;
@@ -48,52 +37,49 @@
     }
 
     async function main() {
-      // ✅ 明示的にWASMパスを指定
-      const vision = await FilesetResolver.forVisionTasks(
-        "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0/wasm"
-      );
-
-      const faceLandmarker = await FaceLandmarker.createFromOptions(vision, {
-        baseOptions: {
-          modelAssetPath:
-            "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task",
-          delegate: "GPU"
-        },
-        outputFaceBlendshapes: false,
-        outputFacialTransformationMatrixes: false,
-        numFaces: 1
-      });
-
       await setupCamera();
       await video.play();
+      status.textContent = "モデル読み込み中...";
 
-      const drawingUtils = new DrawingUtils(canvas);
+      const model = await faceLandmarksDetection.load(
+        faceLandmarksDetection.SupportedPackages.mediapipeFacemesh
+      );
+      status.textContent = "検出中… 顔を写してください";
 
-      const process = async () => {
-        if (video.readyState < 2) return;
+      async function detect() {
+        const predictions = await model.estimateFaces({
+          input: video,
+          returnTensors: false,
+          flipHorizontal: false,
+          predictIrises: false
+        });
 
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-        drawingUtils.drawImage(video, 0, 0, canvas.width, canvas.height);
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-        const result = faceLandmarker.detectForVideo(video, Date.now());
+        if (predictions.length > 0) {
+          const keypoints = predictions[0].scaledMesh;
+          const nose = keypoints[1]; // [x, y, z]
+          const [x, y, z] = nose;
 
-        if (!result.faceLandmarks || result.faceLandmarks.length === 0) {
-          info.textContent = "顔が見つかりません";
+          ctx.fillStyle = "red";
+          ctx.beginPath();
+          ctx.arc(x, y, 5, 0, 2 * Math.PI);
+          ctx.fill();
+
+          status.textContent = `鼻先3D座標:\nX: ${x.toFixed(2)}\nY: ${y.toFixed(2)}\nZ: ${z.toFixed(2)}`;
         } else {
-          const nose = result.faceLandmarks[0][1];
-          info.textContent =
-            `ワールド座標（鼻先）:\nX: ${nose.x.toFixed(4)}\nY: ${nose.y.toFixed(4)}\nZ: ${nose.z.toFixed(4)}`;
+          status.textContent = "顔が見つかりません";
         }
 
-        requestAnimationFrame(process);
-      };
+        requestAnimationFrame(detect);
+      }
 
-      requestAnimationFrame(process);
+      detect();
     }
 
     main().catch(err => {
-      console.error("初期化エラー:", err);
-      info.textContent = "初期化エラー: " + err.message;
+      console.error(err);
+      status.textContent = "エラー: " + err.message;
     });
   </script>
 </body>
