@@ -15,9 +15,9 @@
   <canvas id="output" width="640" height="480"></canvas>
   <div id="status">初期化中...</div>
 
-  <!-- TensorFlow.js & Face Landmarks Detection -->
+  <!-- TensorFlow.js & FaceMeshモデル -->
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.13.0/dist/tf.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/face-landmarks-detection"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/facemesh@0.0.4/dist/facemesh.min.js"></script>
 
   <script>
     const video = document.getElementById("video");
@@ -41,18 +41,11 @@
       await video.play();
       status.textContent = "モデル読み込み中...";
 
-      const model = await faceLandmarksDetection.load(
-        faceLandmarksDetection.SupportedPackages.mediapipeFacemesh
-      );
-      status.textContent = "検出中… 顔を写してください";
+      const model = await facemesh.load();
+      status.textContent = "顔を写してください";
 
       async function detect() {
-        const predictions = await model.estimateFaces({
-          input: video,
-          returnTensors: false,
-          flipHorizontal: false,
-          predictIrises: false
-        });
+        const predictions = await model.estimateFaces(video);
 
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
